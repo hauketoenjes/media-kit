@@ -79,17 +79,26 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
                                      GError** error) {
   TextureGL* self = TEXTURE_GL(texture);
   VideoOutput* video_output = self->video_output;
-  
-  // Save the current GL context state of Flutter
+
+  // Obtain our GL context
   GdkGLContext* ctx = video_output_get_gdk_gl_context(video_output);
+  // If there is no valid context, do not perform any GL calls.
+  if (ctx == NULL) {
+    *target = GL_TEXTURE_2D;
+    *name = self->name;
+    *width = self->current_width;
+    *height = self->current_height;
+    return TRUE;
+  }
+  // Save the current GL context state of Flutter
   GdkGLContext* current_ctx = gdk_gl_context_get_current();
-  
+
   // Only switch if our context is not the current context
   gboolean need_context_switch = (ctx != NULL && current_ctx != ctx);
   if (need_context_switch) {
     gdk_gl_context_make_current(ctx);
   }
-  
+
   gint32 required_width = (guint32)video_output_get_width(video_output);
   gint32 required_height = (guint32)video_output_get_height(video_output);
   if (required_width > 0 && required_height > 0) {
@@ -129,16 +138,20 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
         video_output_get_render_context(video_output);
     // Render the frame.
     mpv_opengl_fbo fbo{(gint32)self->fbo, required_width, required_height, 0};
+    int block =
+        1;  // block until target time for smoother pacing with Flutter's VSync
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_OPENGL_FBO, &fbo},
+        {MPV_RENDER_PARAM_BLOCK_FOR_TARGET_TIME, &block},
         {MPV_RENDER_PARAM_INVALID, NULL},
     };
     mpv_render_context_render(render_context, params);
   }
-  
-  // Unbind the FBO before returning to Flutter to avoid interfering with Flutter's rendering
+
+  // Unbind the FBO before returning to Flutter to avoid interfering with
+  // Flutter's rendering
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  
+
   *target = GL_TEXTURE_2D;
   *name = self->name;
   *width = self->current_width;
@@ -156,7 +169,7 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
     *width = 1;
     *height = 1;
   }
-  
+
   // If we switched to our context, restore the previous context
   if (need_context_switch && current_ctx != NULL) {
     gdk_gl_context_make_current(current_ctx);
@@ -164,6 +177,6 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
     // If there was no previous context, clear the current context
     gdk_gl_context_clear_current();
   }
-  
+
   return TRUE;
 }
