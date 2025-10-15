@@ -125,7 +125,6 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
       // Attach the texture to the FBO.
       glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                              GL_TEXTURE_2D, self->name, 0);
-      glBindFramebuffer(GL_FRAMEBUFFER, self->fbo);
       self->current_width = required_width;
       self->current_height = required_height;
       // Notify Flutter about the change in texture's dimensions.

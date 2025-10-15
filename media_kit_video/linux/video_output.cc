@@ -129,8 +129,15 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
   }
   self->configuration.enable_hardware_acceleration = TRUE;
 #endif
+  // mpv option setup: restore audio sync, keep other optimizations.
   mpv_set_option_string(self->handle, "video-sync", "audio");
   mpv_set_option_string(self->handle, "video-timing-offset", "0");
+  mpv_set_option_string(self->handle, "interpolation", "no");
+  mpv_set_option_string(self->handle, "hwdec-extra-frames", "8");
+  mpv_set_option_string(self->handle, "hwdec",
+                        "vaapi");  // or auto-safe if vaapi not available
+  mpv_set_option_string(self->handle, "opengl-hwdec-interop",
+                        "vaapi-egl");  // Wayland EGL interop
   gboolean hardware_acceleration_supported = FALSE;
   if (self->configuration.enable_hardware_acceleration) {
     GError* error = NULL;
@@ -188,7 +195,7 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
                     return;
                   self->frame_pending = TRUE;
                   g_idle_add_full(
-                      G_PRIORITY_DEFAULT,
+                      G_PRIORITY_DEFAULT_IDLE,
                       [](gpointer user_data) -> gboolean {
                         VideoOutput* s = (VideoOutput*)user_data;
                         if (!s || s->destroyed) {
@@ -238,7 +245,8 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
               if (self->frame_pending)
                 return;
               self->frame_pending = TRUE;
-              gdk_threads_add_idle(
+              g_idle_add_full(
+                  G_PRIORITY_DEFAULT_IDLE,
                   [](gpointer user_data) -> gboolean {
                     VideoOutput* s = (VideoOutput*)user_data;
                     if (s->destroyed) {
