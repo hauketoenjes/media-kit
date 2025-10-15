@@ -195,7 +195,7 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
                     return;
                   self->frame_pending = TRUE;
                   g_idle_add_full(
-                      G_PRIORITY_DEFAULT_IDLE,
+                      G_PRIORITY_DEFAULT,
                       [](gpointer user_data) -> gboolean {
                         VideoOutput* s = (VideoOutput*)user_data;
                         if (!s || s->destroyed) {
@@ -245,8 +245,7 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
               if (self->frame_pending)
                 return;
               self->frame_pending = TRUE;
-              g_idle_add_full(
-                  G_PRIORITY_DEFAULT_IDLE,
+              gdk_threads_add_idle(
                   [](gpointer user_data) -> gboolean {
                     VideoOutput* s = (VideoOutput*)user_data;
                     if (s->destroyed) {
