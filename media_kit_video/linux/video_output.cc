@@ -138,12 +138,16 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
                         "vaapi");  // or auto-safe if vaapi not available
   mpv_set_option_string(self->handle, "opengl-hwdec-interop",
                         "vaapi-egl");  // Wayland EGL interop
+  mpv_set_option_string(self->handle, "opengl-es", "yes");
   gboolean hardware_acceleration_supported = FALSE;
   if (self->configuration.enable_hardware_acceleration) {
     GError* error = NULL;
     GdkWindow* window = gtk_widget_get_window(GTK_WIDGET(view));
     self->gdk_gl_context = gdk_window_create_gl_context(window, &error);
     if (error == NULL) {
+      // Prefer GLES on Wayland/EGL and require at least GLES 3.0
+      gdk_gl_context_set_use_es(self->gdk_gl_context, TRUE);
+      gdk_gl_context_set_required_version(self->gdk_gl_context, 3, 0);
       // OpenGL context must be made current before creating mpv render context.
       gdk_gl_context_realize(self->gdk_gl_context, &error);
       if (error == NULL) {
