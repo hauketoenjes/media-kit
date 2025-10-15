@@ -31,6 +31,7 @@ struct _VideoOutput {
   gpointer texture_update_callback_context;
   FlTextureRegistrar* texture_registrar;
   gboolean destroyed;
+  gboolean frame_pending;
 };
 
 G_DEFINE_TYPE(VideoOutput, video_output, G_TYPE_OBJECT)
@@ -38,7 +39,7 @@ G_DEFINE_TYPE(VideoOutput, video_output, G_TYPE_OBJECT)
 static void video_output_dispose(GObject* object) {
   VideoOutput* self = VIDEO_OUTPUT(object);
   self->destroyed = TRUE;
-  
+
   // Make sure that no more callbacks are invoked from mpv.
   if (self->render_context) {
     mpv_render_context_set_update_callback(self->render_context, NULL, NULL);
@@ -48,7 +49,7 @@ static void video_output_dispose(GObject* object) {
   if (self->texture_gl) {
     fl_texture_registrar_unregister_texture(self->texture_registrar,
                                             FL_TEXTURE(self->texture_gl));
-    
+
     // Make GL context current before freeing mpv_render_context
     // mpv_render_context_free requires the GL context to be current
     if (self->gdk_gl_context != NULL && self->render_context != NULL) {
@@ -81,7 +82,7 @@ static void video_output_dispose(GObject* object) {
       self->render_context = NULL;
     }
   }
-  
+
   g_mutex_clear(&self->mutex);
   g_print("media_kit: VideoOutput: video_output_dispose: %ld\n",
           (gint64)self->handle);
@@ -106,6 +107,7 @@ static void video_output_init(VideoOutput* self) {
   self->texture_update_callback_context = NULL;
   self->texture_registrar = NULL;
   self->destroyed = FALSE;
+  self->frame_pending = FALSE;
   g_mutex_init(&self->mutex);
 }
 
@@ -180,11 +182,24 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
                 self->render_context,
                 [](void* data) {
                   VideoOutput* self = (VideoOutput*)data;
-                  if (self->destroyed) {
+                  if (self->destroyed)
                     return;
-                  }
-                  fl_texture_registrar_mark_texture_frame_available(
-                      self->texture_registrar, FL_TEXTURE(self->texture_gl));
+                  if (self->frame_pending)
+                    return;
+                  self->frame_pending = TRUE;
+                  g_idle_add_full(
+                      G_PRIORITY_DEFAULT,
+                      [](gpointer user_data) -> gboolean {
+                        VideoOutput* s = (VideoOutput*)user_data;
+                        if (!s || s->destroyed) {
+                          return G_SOURCE_REMOVE;
+                        }
+                        fl_texture_registrar_mark_texture_frame_available(
+                            s->texture_registrar, FL_TEXTURE(s->texture_gl));
+                        s->frame_pending = FALSE;
+                        return G_SOURCE_REMOVE;
+                      },
+                      self, NULL);
                 },
                 self);
             hardware_acceleration_supported = TRUE;
@@ -217,20 +232,22 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
         mpv_render_context_set_update_callback(
             self->render_context,
             [](void* data) {
-              // Usage on single-thread is not a concern with pixel buffers
-              // unlike OpenGL. So, I'd like to render on a separate thread
-              // for slowing the UI thread as little as possible. It's a pity
-              // that software rendering is feeling faster than hardware
-              // rendering due to fucked-up GTK.
+              VideoOutput* self = (VideoOutput*)data;
+              if (self->destroyed)
+                return;
+              if (self->frame_pending)
+                return;
+              self->frame_pending = TRUE;
               gdk_threads_add_idle(
-                  [](gpointer data) -> gboolean {
-                    VideoOutput* self = (VideoOutput*)data;
-                    if (self->destroyed) {
+                  [](gpointer user_data) -> gboolean {
+                    VideoOutput* s = (VideoOutput*)user_data;
+                    if (s->destroyed) {
+                      s->frame_pending = FALSE;
                       return FALSE;
                     }
-                    g_mutex_lock(&self->mutex);
-                    gint64 width = video_output_get_width(self);
-                    gint64 height = video_output_get_height(self);
+                    g_mutex_lock(&s->mutex);
+                    gint64 width = video_output_get_width(s);
+                    gint64 height = video_output_get_height(s);
                     if (width > 0 && height > 0) {
                       gint32 size[]{(gint32)width, (gint32)height};
                       gint32 pitch = 4 * (gint32)width;
@@ -238,18 +255,18 @@ VideoOutput* video_output_new(FlTextureRegistrar* texture_registrar,
                           {MPV_RENDER_PARAM_SW_SIZE, size},
                           {MPV_RENDER_PARAM_SW_FORMAT, (void*)"rgb0"},
                           {MPV_RENDER_PARAM_SW_STRIDE, &pitch},
-                          {MPV_RENDER_PARAM_SW_POINTER, self->pixel_buffer},
+                          {MPV_RENDER_PARAM_SW_POINTER, s->pixel_buffer},
                           {MPV_RENDER_PARAM_INVALID, (void*)0},
                       };
-                      mpv_render_context_render(self->render_context, params);
+                      mpv_render_context_render(s->render_context, params);
                       fl_texture_registrar_mark_texture_frame_available(
-                          self->texture_registrar,
-                          FL_TEXTURE(self->texture_sw));
+                          s->texture_registrar, FL_TEXTURE(s->texture_sw));
                     }
-                    g_mutex_unlock(&self->mutex);
+                    g_mutex_unlock(&s->mutex);
+                    s->frame_pending = FALSE;
                     return FALSE;
                   },
-                  data);
+                  self);
             },
             self);
         g_print("media_kit: VideoOutput: Using S/W rendering.\n");
